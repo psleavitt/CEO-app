@@ -94,6 +94,12 @@ h1,h2,h3{font-weight:600}
 .st-risk{color:var(--warn);border-color:rgba(232,185,62,.4)}
 .st-off{color:var(--down);border-color:rgba(242,85,90,.4)}
 .st-na{color:var(--off);border-color:var(--line)}
+.score-pick{display:flex;gap:8px;justify-content:center;margin-top:4px}
+.score-btn{width:44px;height:44px;border-radius:50%;border:1.5px solid var(--line);
+  font-family:var(--mono);font-size:16px;font-weight:600;color:var(--steel);
+  display:flex;align-items:center;justify-content:center;flex:none}
+.score-btn.sel{background:var(--gold);border-color:var(--gold);color:#0C1220}
+.score-hint{text-align:center;font-size:11px;color:var(--steel-dim);margin-top:8px}
 
 /* ---------- lists (goals/responsibilities/values) ---------- */
 .check-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
@@ -204,7 +210,7 @@ h1,h2,h3{font-weight:600}
 const SUPABASE_URL = 'https://ctxnyfgdiugzhskumqpm.supabase.co';
 // Paste the shared anon key here (same one embedded in your other apps).
 // Sync stays quietly disabled until this is set.
-const SUPABASE_ANON_KEY = '';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN0eG55ZmdkaXVnemhza3VtcXBtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMxODUxNzgsImV4cCI6MjA5ODc2MTE3OH0.waXx4gHFKwRJWNloGRhIpe7TH5UVn1N_jPLgaAn2oEY';
 const SYNC_TABLE = 'ceo_state';
 const LS_KEY = 'ceo_state_v1';
 
@@ -220,25 +226,25 @@ const DEPT_DEFS = [
 ];
 
 function seedKPIs(){
-  // {id, dept, name, unit, cadence: week|month|quarter|year, agg: sum|latest, dir: up|down, target, linked, entries:[{d,v}]}
-  const mk=(id,dept,name,unit,cadence,agg,dir,target,linked)=>({id,dept,name,unit,cadence,agg,dir,target,linked:!!linked,entries:[]});
+  // metric: {id,dept,name,type:'metric',unit,cadence,agg,dir,target,entries:[{d,v}]}
+  // score:  {id,dept,name,type:'score',cadence,entries:[{d,v}]}  v is 1-5, self-rated
+  const metric=(id,dept,name,unit,cadence,agg,dir,target)=>({id,dept,name,type:'metric',unit,cadence,agg,dir,target,entries:[]});
+  const score=(id,dept,name,cadence)=>({id,dept,name,type:'score',cadence,entries:[]});
   return [
-    mk('networth','finance','Net Worth','$','month','latest','up',null),
-    mk('income','finance','Monthly Income','$','month','sum','up',null),
-    mk('expenses','finance','Monthly Expenses','$','month','sum','down',null),
-    mk('savingsrate','finance','Savings Rate','%','month','latest','up',20),
-    mk('workouts','health','Workouts','/wk','week','sum','up',4,'rack'),
-    mk('bodyweight','health','Body Weight','lb','week','latest','down',null,'rack'),
-    mk('temple','spiritual','Temple Worship','/wk','week','sum','up',1,'firstlight'),
-    mk('study','spiritual','Gospel Study Days','/wk','week','sum','up',7,'firstlight'),
-    mk('checkins','hr','Nightly Check-ins','/wk','week','sum','up',7,'firstlight'),
-    mk('daughter11','hr','1:1 Time — Daughters','/mo','month','sum','up',4),
-    mk('overdue','operations','Overdue Household Tasks','','week','latest','down',0,'gtd'),
-    mk('tasksdone','operations','Tasks Completed','/wk','week','sum','up',10,'gtd'),
-    mk('hobby','leisure','Hobby Hours','hrs/wk','week','sum','up',3),
-    mk('trips','leisure','Trips Taken','YTD','year','sum','up',2),
-    mk('books','rd','Books Completed','YTD','year','sum','up',6),
-    mk('courses','rd','Courses in Progress','','quarter','latest','up',1),
+    metric('networth','finance','Net Worth','$','month','latest','up',null),
+    metric('income','finance','Monthly Income','$','month','sum','up',null),
+    metric('expenses','finance','Monthly Expenses','$','month','sum','down',null),
+    metric('savingsrate','finance','Savings Rate','%','month','latest','up',20),
+    metric('hobby','leisure','Hobby Hours','hrs/wk','week','sum','up',3),
+    metric('trips','leisure','Trips Taken','YTD','year','sum','up',2),
+    score('vitality','health','Physical Vitality','week'),
+    score('rest','health','Rest & Recovery','week'),
+    score('marriage','hr','Marriage Connection','week'),
+    score('presence','hr','Presence with Kids','week'),
+    score('faith','spiritual','Faith Consistency','week'),
+    score('peace','spiritual','Inner Peace','week'),
+    score('order','operations','Household Order','week'),
+    score('followthrough','operations','Follow-Through','week'),
   ];
 }
 
@@ -251,11 +257,33 @@ function freshState(name){
     assets: [],           // {id,name,cat,value}  cat: cash|investments|realestate|other|liability
     incomes: [],          // {id,month:'2026-08',source,amount}
     meetings: [],         // {q:'2026-Q3',date,packet:[...],notes:{deptId:txt},memo}
-    settings:{syncCode:'',conn:{rack:'',firstlight:'',gtd:''}},
+    learning: [],          // {id,title,kind:'book'|'course',status:'queued'|'inprogress'|'done',rating,notes}
+    skills: [],             // {id,title,milestones:[{t,done}]}
+    settings:{syncCode:''},
   };
 }
 
-let S = load();
+// Migrates state saved by earlier builds of this app to the current shape.
+// Safe to call on fresh state too (all steps are no-ops if already current).
+function migrate(s){
+  if(!s) return s;
+  if(!s.learning) s.learning=[];
+  if(!s.skills) s.skills=[];
+  if(!s.settings) s.settings={syncCode:''};
+  if(s.settings.conn) delete s.settings.conn;
+  const retiredIds=['workouts','bodyweight','temple','study','checkins','daughter11','overdue','tasksdone','books','courses'];
+  s.kpis = (s.kpis||[]).filter(k=>!retiredIds.includes(k.id)).map(k=>{
+    if(!k.type) k.type='metric';
+    if('linked' in k) delete k.linked;
+    return k;
+  });
+  const existingIds = new Set(s.kpis.map(k=>k.id));
+  const defaults = seedKPIs().filter(k=>['health','hr','spiritual','operations'].includes(k.dept) && !existingIds.has(k.id));
+  s.kpis = s.kpis.concat(defaults);
+  return s;
+}
+
+let S = migrate(load());
 function load(){
   try{ const raw = localStorage.getItem(LS_KEY); if(raw) return JSON.parse(raw); }catch(e){}
   return null;
@@ -276,19 +304,21 @@ function periodLabel(c){ return c==='week'?'this week':c==='month'?'this month':
 /* ================= KPI MATH ================= */
 function periodSeries(kpi, n=12){
   // returns [{k, v}] last n periods (with data), chronological
+  const agg = kpi.type==='score' ? 'latest' : kpi.agg;
   const map={};
   for(const e of kpi.entries){ const k=periodKey(kpi,e.d);
-    if(kpi.agg==='sum'){ map[k]=(map[k]||0)+e.v; }
+    if(agg==='sum'){ map[k]=(map[k]||0)+e.v; }
     else { if(!map[k]||e.d>=map[k].d) map[k]={d:e.d,v:e.v}; } }
   const keys=Object.keys(map).sort();
-  return keys.slice(-n).map(k=>({k, v: kpi.agg==='sum'?map[k]:map[k].v}));
+  return keys.slice(-n).map(k=>({k, v: agg==='sum'?map[k]:map[k].v}));
 }
 function currentValue(kpi){
   const k=periodKey(kpi,todayStr());
   const ser=periodSeries(kpi,60);
   const hit=ser.find(s=>s.k===k);
   if(hit) return hit.v;
-  if(kpi.agg==='latest' && ser.length) return ser[ser.length-1].v; // carry forward latest
+  const agg = kpi.type==='score' ? 'latest' : kpi.agg;
+  if(agg==='latest' && ser.length) return ser[ser.length-1].v; // carry forward latest
   return null;
 }
 function prevValue(kpi){
@@ -299,6 +329,7 @@ function prevValue(kpi){
 function kpiStatus(kpi){
   const v=currentValue(kpi);
   if(v===null) return 'na';
+  if(kpi.type==='score'){ return v>=5?'on':v>=3?'risk':'off'; }
   if(kpi.target===null||kpi.target===undefined||kpi.target==='') return 'na';
   const t=+kpi.target;
   let pct;
@@ -336,7 +367,7 @@ function sparkSVG(kpi){
   const x=i=>P+i*(W-2*P)/(ser.length-1);
   const y=v=>max===min?H/2:H-P-(v-min)*(H-2*P)/(max-min);
   const pts=vs.map((v,i)=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-  const good = kpi.dir==='up' ? vs[vs.length-1]>=vs[0] : vs[vs.length-1]<=vs[0];
+  const good = (kpi.dir||'up')==='up' ? vs[vs.length-1]>=vs[0] : vs[vs.length-1]<=vs[0];
   const col = good?'var(--up)':'var(--down)';
   return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
     <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.6" opacity=".9"/>
@@ -379,15 +410,18 @@ function renderSummary(){
     const ks=S.kpis.filter(k=>k.dept===d.id).slice(0,3);
     const lines=ks.map(k=>{
       const cur=currentValue(k), prev=prevValue(k);
+      const isScore=k.type==='score';
       let delta='';
       if(cur!==null&&prev!==null&&prev!==cur){
-        const upGood=k.dir==='up';
+        const upGood=k.dir!=='down';
         const rising=cur>prev;
         const good=(rising&&upGood)||(!rising&&!upGood);
         delta=` <span class="${good?'delta-up':'delta-down'}">${rising?'▲':'▼'}</span>`;
       }
+      const valStr = isScore ? (cur===null?'—':cur+'/5')
+        : fmtVal(k,cur)+(k.target!=null&&k.target!==''?` <span class="tiny">/ ${fmtVal(k,+k.target)}</span>`:'');
       return `<div class="dept-kpi-line"><span class="dkl-name">${esc(k.name)}</span>
-        <span class="dkl-val">${fmtVal(k,cur)}${k.target!=null&&k.target!==''?` <span class="tiny">/ ${fmtVal(k,+k.target)}</span>`:''}${delta}</span></div>`;
+        <span class="dkl-val">${valStr}${delta}</span></div>`;
     }).join('');
     return `<button class="card tappable dept-card" onclick="openDept('${d.id}')">
       <div class="row"><span class="dept-name">${esc(d.name)}</span><span class="dot ${deptStatus(d.id)}"></span></div>
@@ -419,15 +453,20 @@ function renderDept(id){
   const ks=S.kpis.filter(k=>k.dept===id);
   const kpiCards=ks.map(k=>{
     const cur=currentValue(k), st=kpiStatus(k);
+    const isScore=k.type==='score';
+    const valStr = isScore ? (cur===null?'—':cur) : fmtVal(k,cur);
+    const unitStr = isScore ? '/5' : (k.unit&&k.unit!=='$'?esc(k.unit):'');
+    const targetStr = isScore ? '' : (k.target!=null&&k.target!==''?`target<br>${fmtVal(k,+k.target)}`:'');
+    const metaStr = `${k.cadence} · ${isScore?'self-rated':(k.agg==='sum'?'total':'latest')}`;
     return `<div class="card kpi-card">
       <div class="kpi-top">
         <div><div class="kpi-name">${esc(k.name)}</div>
-          <div class="kpi-meta">${k.cadence} · ${k.agg==='sum'?'total':'latest'}${k.linked?' · linked: '+k.linked:''}</div></div>
+          <div class="kpi-meta">${metaStr}</div></div>
         <button class="x-btn" onclick="editKPI('${k.id}')" aria-label="Edit KPI">✎</button>
       </div>
       <div class="kpi-mid">
-        <div class="kpi-val">${fmtVal(k,cur)}<span class="unit">${k.unit&&k.unit!=='$'?esc(k.unit):''}</span></div>
-        <div class="kpi-target">${k.target!=null&&k.target!==''?`target<br>${fmtVal(k,+k.target)}`:''}</div>
+        <div class="kpi-val">${valStr}<span class="unit">${unitStr}</span></div>
+        <div class="kpi-target">${targetStr}</div>
       </div>
       ${sparkSVG(k)}
       <div class="kpi-foot">
@@ -456,6 +495,7 @@ function renderDept(id){
     ${kpiCards||'<div class="muted">No KPIs yet.</div>'}
     <button class="btn ghost" style="width:100%" onclick="editKPI(null,'${id}')">+ Add KPI</button>
     ${id==='finance'?financePanels():''}
+    ${id==='rd'?rdPanels():''}
     <div class="sec-label">Goals</div>
     <div class="card">${goals||'<div class="muted">No goals set.</div>'}
       <div class="add-row"><input id="goalIn" placeholder="Add a goal…"><button class="btn small" onclick="addGoal('${id}')">Add</button></div></div>
@@ -528,9 +568,96 @@ function delIncome(id){ S.incomes=S.incomes.filter(i=>i.id!==id); persist(); ren
 function syncIncomeKPI(mo,total){ const k=S.kpis.find(k=>k.id==='income'); if(!k)return;
   k.entries=k.entries.filter(e=>monthKey(e.d)!==mo); k.entries.push({d:mo+'-15',v:total}); persist(); render(); toast('Posted to Monthly Income KPI'); }
 
+/* ---------- R&D PANELS ---------- */
+const LEARN_STATUS=[['queued','Queued'],['inprogress','In Progress'],['done','Completed']];
+function rdPanels(){
+  const groups=LEARN_STATUS.map(([key,label])=>({key,label,items:S.learning.filter(l=>l.status===key)}));
+  const logHTML=groups.map(gr=>`
+    <div class="sec-label" style="margin-top:14px">${gr.label} (${gr.items.length})</div>
+    <div class="card">${gr.items.length?gr.items.map(l=>`
+      <div class="check-item">
+        <span class="check-text" style="flex:1">${esc(l.title)}
+          <span class="tiny">${l.kind==='book'?'book':'course'}${l.status==='done'&&l.rating?' · '+'★'.repeat(l.rating):''}</span></span>
+        ${l.status!=='done'?`<button class="x-btn" onclick="cycleLearning('${l.id}')" title="Advance">→</button>`:''}
+        <button class="x-btn" onclick="delLearning('${l.id}')">×</button>
+      </div>`).join(''):'<div class="muted">Nothing here yet.</div>'}</div>`).join('');
+  const skillsHTML=S.skills.map(sk=>{
+    const ms=(sk.milestones||[]).map((m,i)=>`<div class="check-item">
+      <button class="check-box ${m.done?'done':''}" onclick="toggleSkillMilestone('${sk.id}',${i})">${m.done?'✓':''}</button>
+      <span class="check-text ${m.done?'done':''}">${esc(m.t)}</span>
+      <button class="x-btn" onclick="delSkillMilestone('${sk.id}',${i})">×</button></div>`).join('');
+    return `<div class="card">
+      <div class="row"><span style="font-weight:600">${esc(sk.title)}</span><button class="x-btn" onclick="delSkill('${sk.id}')">×</button></div>
+      <div style="margin-top:4px">${ms||'<div class="muted">No milestones yet.</div>'}</div>
+      <div class="add-row"><input id="msIn_${sk.id}" placeholder="Add a milestone…"><button class="btn small" onclick="addSkillMilestone('${sk.id}')">Add</button></div>
+    </div>`;
+  }).join('');
+  return `
+    <div class="sec-label">Learning Log</div>
+    ${logHTML}
+    <button class="btn ghost" style="width:100%;margin-top:2px" onclick="addLearning()">+ Add to Learning Log</button>
+    <div class="sec-label">Skill Goals</div>
+    ${skillsHTML}
+    <div class="card"><div class="add-row" style="margin-top:0"><input id="skillIn" placeholder="New skill goal…"><button class="btn small" onclick="addSkill()">Add</button></div></div>`;
+}
+function addLearning(){
+  openModal(`<h3>Add to Learning Log</h3>
+    <div class="form-row"><label>Title</label><input id="m_title" placeholder="e.g. Atomic Habits" autofocus></div>
+    <div class="form-row"><label>Type</label><select id="m_kind"><option value="book">Book</option><option value="course">Course</option></select></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+    <button class="btn" onclick="saveLearning()">Add</button></div>`);
+}
+function saveLearning(){ const t=g('m_title'); if(!t)return;
+  S.learning.push({id:uid(),title:t,kind:g('m_kind'),status:'queued',rating:0,notes:''}); persist(); closeModal(); render(); }
+function cycleLearning(id){
+  const l=S.learning.find(x=>x.id===id); if(!l)return;
+  const order=['queued','inprogress','done']; const idx=order.indexOf(l.status);
+  if(idx>=order.length-1)return;
+  const next=order[idx+1];
+  if(next==='done'){ rateLearning(id); return; }
+  l.status=next; persist(); render();
+}
+function rateLearning(id){
+  window.__pickedScore=null;
+  openModal(`<h3>Mark complete</h3>
+    <div class="form-row"><label>Rating (optional)</label>
+      <div class="score-pick" id="scorePick">
+        ${[1,2,3,4,5].map(n=>`<button class="score-btn" data-v="${n}" onclick="selectScore(${n})">${n}</button>`).join('')}
+      </div></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="skipRating('${id}')">Skip</button>
+    <button class="btn" onclick="saveRating('${id}')">Save</button></div>`);
+}
+function saveRating(id){ const l=S.learning.find(x=>x.id===id); if(!l)return;
+  l.status='done'; l.rating=window.__pickedScore||0; persist(); closeModal(); render(); }
+function skipRating(id){ const l=S.learning.find(x=>x.id===id); if(!l)return;
+  l.status='done'; persist(); closeModal(); render(); }
+function delLearning(id){ S.learning=S.learning.filter(l=>l.id!==id); persist(); render(); }
+function addSkill(){ const inp=document.getElementById('skillIn'); const v=inp.value.trim(); if(!v)return;
+  S.skills.push({id:uid(),title:v,milestones:[]}); persist(); render(); }
+function delSkill(id){ S.skills=S.skills.filter(s=>s.id!==id); persist(); render(); }
+function addSkillMilestone(skillId){ const inp=document.getElementById('msIn_'+skillId); const v=inp.value.trim(); if(!v)return;
+  S.skills.find(s=>s.id===skillId).milestones.push({t:v,done:false}); persist(); render(); }
+function toggleSkillMilestone(skillId,i){ const sk=S.skills.find(s=>s.id===skillId); sk.milestones[i].done=!sk.milestones[i].done; persist(); render(); }
+function delSkillMilestone(skillId,i){ S.skills.find(s=>s.id===skillId).milestones.splice(i,1); persist(); render(); }
+
 /* ---------- KPI LOG / EDIT ---------- */
 function logKPI(id){
   const k=S.kpis.find(x=>x.id===id);
+  if(k.type==='score'){
+    const last=k.entries.length?k.entries[k.entries.length-1].v:null;
+    window.__pickedScore=last;
+    openModal(`<h3>Log — ${esc(k.name)}</h3>
+      <div class="form-row"><label>How's it going?</label>
+        <div class="score-pick" id="scorePick">
+          ${[1,2,3,4,5].map(n=>`<button class="score-btn ${n===last?'sel':''}" data-v="${n}" onclick="selectScore(${n})">${n}</button>`).join('')}
+        </div>
+        <div class="score-hint">1 = struggling &nbsp;·&nbsp; 5 = thriving</div></div>
+      <div class="form-row"><label>Date</label><input id="m_date" type="date" value="${todayStr()}"></div>
+      ${k.entries.length?`<div class="tiny" style="margin-bottom:8px">Recent: ${k.entries.slice(-4).reverse().map(e=>`${e.v}/5 <span style="opacity:.6">(${e.d.slice(5)})</span>`).join(' · ')}</div>`:''}
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn" onclick="saveLog('${id}')">Save entry</button></div>`);
+    return;
+  }
   openModal(`<h3>Log — ${esc(k.name)}</h3>
     <div class="form-2col">
       <div class="form-row"><label>Value${k.unit?` (${esc(k.unit)})`:''}</label><input id="m_val" type="number" inputmode="decimal" autofocus></div>
@@ -539,39 +666,69 @@ function logKPI(id){
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Cancel</button>
     <button class="btn" onclick="saveLog('${id}')">Save entry</button></div>`);
 }
-function saveLog(id){ const v=g('m_val'),d=g('m_date'); if(v===''||!d)return;
+function selectScore(n){ window.__pickedScore=n;
+  document.querySelectorAll('#scorePick .score-btn').forEach(b=>b.classList.toggle('sel', +b.dataset.v===n)); }
+function saveLog(id){
   const k=S.kpis.find(x=>x.id===id);
-  if(k.agg==='latest') k.entries=k.entries.filter(e=>e.d!==d);
-  k.entries.push({d,v:+v}); k.entries.sort((a,b)=>a.d<b.d?-1:1);
+  const d=g('m_date'); if(!d)return;
+  let v;
+  if(k.type==='score'){ v=window.__pickedScore; if(!v)return; }
+  else { const raw=g('m_val'); if(raw==='')return; v=+raw; }
+  const dedupe = k.type==='score' || k.agg==='latest';
+  if(dedupe) k.entries=k.entries.filter(e=>e.d!==d);
+  k.entries.push({d,v}); k.entries.sort((a,b)=>a.d<b.d?-1:1);
   persist(); closeModal(); render(); }
 
+const SCORE_ONLY_DEPTS=['health','hr','spiritual','operations'];
 function editKPI(id, deptForNew){
   const k=id?S.kpis.find(x=>x.id===id):null;
+  const dept=k?k.dept:deptForNew;
+  const scoreOnly=SCORE_ONLY_DEPTS.includes(dept);
+  const showTypeSelect = !k && !scoreOnly;
+  const metricVisible = k ? k.type==='metric' : false;
   openModal(`<h3>${k?'Edit KPI':'New KPI'}</h3>
-    <div class="form-row"><label>Name</label><input id="m_name" value="${k?esc(k.name):''}" placeholder="e.g. Pages Read"></div>
-    <div class="form-2col">
-      <div class="form-row"><label>Unit</label><input id="m_unit" value="${k?esc(k.unit):''}" placeholder="e.g. hrs, $, %"></div>
-      <div class="form-row"><label>Target</label><input id="m_target" type="number" inputmode="decimal" value="${k&&k.target!=null?k.target:''}" placeholder="optional"></div></div>
-    <div class="form-2col">
-      <div class="form-row"><label>Cadence</label><select id="m_cad">
-        ${['week','month','quarter','year'].map(c=>`<option value="${c}" ${k&&k.cadence===c?'selected':''}>${c[0].toUpperCase()+c.slice(1)}ly</option>`).join('')}</select></div>
+    <div class="form-row"><label>Name</label><input id="m_name" value="${k?esc(k.name):''}" placeholder="${scoreOnly?'e.g. Marriage Connection':'e.g. Pages Read'}" autofocus></div>
+    ${showTypeSelect?`<div class="form-row"><label>Type</label><select id="m_type" onchange="toggleKPIType()">
+      <option value="score">Self-rated score (1–5)</option>
+      <option value="metric">Number with target</option></select></div>`:''}
+    <div class="form-row"><label>Cadence</label><select id="m_cad">
+      ${['week','month','quarter','year'].map(c=>`<option value="${c}" ${k&&k.cadence===c?'selected':''}>${c[0].toUpperCase()+c.slice(1)}ly</option>`).join('')}</select></div>
+    <div id="metricFields" class="${metricVisible?'':'hidden'}">
+      <div class="form-2col">
+        <div class="form-row"><label>Unit</label><input id="m_unit" value="${k&&k.type==='metric'?esc(k.unit||''):''}" placeholder="e.g. hrs, $, %"></div>
+        <div class="form-row"><label>Target</label><input id="m_target" type="number" inputmode="decimal" value="${k&&k.type==='metric'&&k.target!=null?k.target:''}" placeholder="optional"></div></div>
       <div class="form-row"><label>Roll-up</label><select id="m_agg">
         <option value="sum" ${k&&k.agg==='sum'?'selected':''}>Sum of entries</option>
-        <option value="latest" ${k&&k.agg==='latest'?'selected':''}>Latest value</option></select></div></div>
-    <div class="form-row"><label>Direction</label><select id="m_dir">
-      <option value="up" ${!k||k.dir==='up'?'selected':''}>Higher is better</option>
-      <option value="down" ${k&&k.dir==='down'?'selected':''}>Lower is better</option></select></div>
+        <option value="latest" ${k&&k.agg==='latest'?'selected':''}>Latest value</option></select></div>
+      <div class="form-row"><label>Direction</label><select id="m_dir">
+        <option value="up" ${!k||k.dir==='up'?'selected':''}>Higher is better</option>
+        <option value="down" ${k&&k.dir==='down'?'selected':''}>Lower is better</option></select></div>
+    </div>
     <div class="modal-actions">
       ${k?`<button class="btn danger" onclick="delKPI('${id}')">Delete</button>`:''}
       <button class="btn ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn" onclick="saveKPI(${k?`'${id}'`:'null'},${deptForNew?`'${deptForNew}'`:'null'})">Save</button></div>`);
+      <button class="btn" onclick="saveKPI(${k?`'${id}'`:'null'},${deptForNew?`'${deptForNew}'`:(k?`'${k.dept}'`:'null')})">Save</button></div>`);
+}
+function toggleKPIType(){
+  const t=document.getElementById('m_type').value;
+  document.getElementById('metricFields').classList.toggle('hidden', t!=='metric');
 }
 function saveKPI(id,dept){
   const name=g('m_name'); if(!name)return;
-  const fields={name,unit:g('m_unit'),target:g('m_target')===''?null:+g('m_target'),
-    cadence:g('m_cad'),agg:g('m_agg'),dir:g('m_dir')};
-  if(id){ Object.assign(S.kpis.find(x=>x.id===id),fields); }
-  else { S.kpis.push({id:uid(),dept,linked:false,entries:[],...fields}); }
+  const cadence=g('m_cad');
+  if(id){
+    const k=S.kpis.find(x=>x.id===id);
+    k.name=name; k.cadence=cadence;
+    if(k.type==='metric'){ k.unit=g('m_unit'); k.target=g('m_target')===''?null:+g('m_target'); k.agg=g('m_agg'); k.dir=g('m_dir'); }
+  } else {
+    const typeEl=document.getElementById('m_type');
+    const type=typeEl?typeEl.value:'score';
+    if(type==='metric'){
+      S.kpis.push({id:uid(),dept,name,type,cadence,unit:g('m_unit'),target:g('m_target')===''?null:+g('m_target'),agg:g('m_agg'),dir:g('m_dir'),entries:[]});
+    } else {
+      S.kpis.push({id:uid(),dept,name,type,cadence,entries:[]});
+    }
+  }
   persist(); closeModal(); render();
 }
 function delKPI(id){ if(!confirm('Delete this KPI and its history?'))return;
@@ -580,8 +737,13 @@ function delKPI(id){ if(!confirm('Delete this KPI and its history?'))return;
 /* ---------- BOARD ---------- */
 function buildPacket(){
   return S.depts.map(d=>({dept:d.name, deptId:d.id, status:deptStatus(d.id),
-    kpis:S.kpis.filter(k=>k.dept===d.id).map(k=>({name:k.name,cur:fmtVal(k,currentValue(k)),
-      target:k.target!=null&&k.target!==''?fmtVal(k,+k.target):'—',st:kpiStatus(k)}))}));
+    kpis:S.kpis.filter(k=>k.dept===d.id).map(k=>{
+      const cur=currentValue(k);
+      return {name:k.name,
+        cur: k.type==='score' ? (cur===null?'—':cur+'/5') : fmtVal(k,cur),
+        target: k.type==='score' ? '' : (k.target!=null&&k.target!==''?fmtVal(k,+k.target):'—'),
+        st:kpiStatus(k)};
+    })}));
 }
 function renderBoard(){
   const q=curQuarter();
@@ -605,7 +767,7 @@ function renderMeeting(q,readonly){
   const packet = m?m.packet:buildPacket();
   const pktHTML=packet.map(p=>`<div class="pkt-dept"><span class="dot ${p.status}" style="display:inline-block;margin-right:6px"></span>${esc(p.dept)}</div>
     ${p.kpis.map(k=>`<div class="pkt-row"><span class="pkt-kpi">${esc(k.name)}</span>
-      <span>${k.cur} <span style="color:var(--steel-dim)">/ ${k.target}</span></span></div>`).join('')||'<div class="tiny">No KPIs</div>'}`).join('');
+      <span>${k.cur}${k.target?` <span style="color:var(--steel-dim)">/ ${k.target}</span>`:''}</span></div>`).join('')||'<div class="tiny">No KPIs</div>'}`).join('');
   const notesHTML=packet.map(p=>`<div class="form-row"><label>${esc(p.dept)} — notes</label>
     <textarea id="note_${p.deptId}" ${readonly?'readonly':''} placeholder="Wins, misses, focus for next quarter…">${m?esc(m.notes[p.deptId]||''):''}</textarea></div>`).join('');
   app.innerHTML=`<div class="masthead">
@@ -686,12 +848,6 @@ function renderSettings(){
       <div class="form-row"><label>Sync code</label><input id="s_sync" value="${esc(S.settings.syncCode)}" placeholder="Choose a private code"></div>
       <button class="btn small" onclick="saveSync()">Save</button>
       <div class="tiny" style="margin-top:8px">${SUPABASE_ANON_KEY?'Syncs to your shared Supabase project.':'Sync is disabled until the anon key is added to the file (see CONFIG at top of the script).'}</div></div>
-    <div class="sec-label">Linked Sources</div>
-    <div class="card">
-      ${[['rack','Rack (workouts, body weight)'],['firstlight','First Light (habits)'],['gtd','GTD (household tasks)']].map(([k,l])=>
-        `<div class="form-row"><label>${l} — sync code</label><input id="conn_${k}" value="${esc(S.settings.conn[k]||'')}"></div>`).join('')}
-      <button class="btn small" onclick="saveConn()">Save</button>
-      <div class="tiny" style="margin-top:8px">Live pulls are wired in v1.1 — codes saved here will be used once each source's table mapping is confirmed. Linked KPIs accept manual entries meanwhile.</div></div>
     <div class="sec-label">Data</div>
     <div class="card"><div class="add-row" style="margin-top:0">
       <button class="btn ghost small" style="flex:1" onclick="exportData()">Export JSON</button>
@@ -700,7 +856,6 @@ function renderSettings(){
 }
 function saveName(){ const v=g('s_name'); if(v){S.name=v; persist(); render(); toast('Saved');} }
 function saveSync(){ S.settings.syncCode=g('s_sync'); persist(); toast('Saved'); pullRemote(); }
-function saveConn(){ ['rack','firstlight','gtd'].forEach(k=>S.settings.conn[k]=g('conn_'+k)); persist(); toast('Saved'); }
 function exportData(){
   const blob=new Blob([JSON.stringify(S,null,1)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
@@ -709,7 +864,7 @@ function exportData(){
 function importData(){
   const inp=document.createElement('input'); inp.type='file'; inp.accept='.json';
   inp.onchange=()=>{ const f=inp.files[0]; if(!f)return; const r=new FileReader();
-    r.onload=()=>{ try{ const d=JSON.parse(r.result); if(d&&d.v===1&&d.depts){ S=d; persist(); render(); toast('Imported'); }
+    r.onload=()=>{ try{ const d=JSON.parse(r.result); if(d&&d.v===1&&d.depts){ S=migrate(d); persist(); render(); toast('Imported'); }
       else toast('Not a valid CEO backup'); }catch(e){ toast('Import failed'); } };
     r.readAsText(f); };
   inp.click();
@@ -784,7 +939,7 @@ async function pullRemote(){
     const rows=await r.json();
     if(rows.length && rows[0].revision>(S.revision||0)){
       const localSettings=S.settings;
-      S=rows[0].payload; S.settings=S.settings||localSettings;
+      S=migrate(rows[0].payload); S.settings=S.settings||localSettings;
       localStorage.setItem(LS_KEY,JSON.stringify(S));
       render(); setSyncDot('synced');
     }

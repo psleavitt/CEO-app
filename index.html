@@ -100,6 +100,10 @@ h1,h2,h3{font-weight:600}
   display:flex;align-items:center;justify-content:center;flex:none}
 .score-btn.sel{background:var(--gold);border-color:var(--gold);color:#0C1220}
 .score-hint{text-align:center;font-size:11px;color:var(--steel-dim);margin-top:8px}
+.init-row{border-top:1px solid var(--line);padding:10px 0}
+.init-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.init-title{font-size:13.5px;flex:1}
+.init-actions{display:flex;gap:8px;margin-top:6px;justify-content:flex-end;align-items:center}
 
 /* ---------- lists (goals/responsibilities/values) ---------- */
 .check-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
@@ -239,8 +243,6 @@ function seedKPIs(){
     metric('trips','leisure','Trips Taken','YTD','year','sum','up',2),
     score('vitality','health','Physical Vitality','week'),
     score('rest','health','Rest & Recovery','week'),
-    score('marriage','hr','Marriage Connection','week'),
-    score('presence','hr','Presence with Kids','week'),
     score('faith','spiritual','Faith Consistency','week'),
     score('peace','spiritual','Inner Peace','week'),
     score('order','operations','Household Order','week'),
@@ -259,6 +261,7 @@ function freshState(name){
     meetings: [],         // {q:'2026-Q3',date,packet:[...],notes:{deptId:txt},memo}
     learning: [],          // {id,title,kind:'book'|'course',status:'queued'|'inprogress'|'done',rating,notes}
     skills: [],             // {id,title,milestones:[{t,done}]}
+    people: [],             // {id,name,relationship,type:'score',cadence:'week',entries:[{d,v}],initiatives:[{id,title,type:'score',cadence:'week',entries:[{d,v}]}]}
     settings:{syncCode:''},
   };
 }
@@ -269,16 +272,17 @@ function migrate(s){
   if(!s) return s;
   if(!s.learning) s.learning=[];
   if(!s.skills) s.skills=[];
+  if(!s.people) s.people=[];
   if(!s.settings) s.settings={syncCode:''};
   if(s.settings.conn) delete s.settings.conn;
   const retiredIds=['workouts','bodyweight','temple','study','checkins','daughter11','overdue','tasksdone','books','courses'];
-  s.kpis = (s.kpis||[]).filter(k=>!retiredIds.includes(k.id)).map(k=>{
+  s.kpis = (s.kpis||[]).filter(k=>!retiredIds.includes(k.id) && k.dept!=='hr').map(k=>{
     if(!k.type) k.type='metric';
     if('linked' in k) delete k.linked;
     return k;
   });
   const existingIds = new Set(s.kpis.map(k=>k.id));
-  const defaults = seedKPIs().filter(k=>['health','hr','spiritual','operations'].includes(k.dept) && !existingIds.has(k.id));
+  const defaults = seedKPIs().filter(k=>['health','spiritual','operations'].includes(k.dept) && !existingIds.has(k.id));
   s.kpis = s.kpis.concat(defaults);
   return s;
 }
@@ -338,6 +342,13 @@ function kpiStatus(kpi){
   return pct>=100?'on':pct>=70?'risk':'off';
 }
 function deptStatus(deptId){
+  if(deptId==='hr'){
+    const sts=S.people.map(p=>kpiStatus(p)).filter(s=>s!=='na');
+    if(!sts.length) return 'na';
+    if(sts.includes('off')) return 'off';
+    if(sts.includes('risk')) return 'risk';
+    return 'on';
+  }
   const ks=S.kpis.filter(k=>k.dept===deptId);
   const sts=ks.map(kpiStatus).filter(s=>s!=='na');
   if(!sts.length) return 'na';
@@ -407,25 +418,34 @@ function shortName(n){ return n==='Human Resources'?'HR':n==='Research & Develop
 /* ---------- SUMMARY ---------- */
 function renderSummary(){
   const cards=S.depts.map(d=>{
-    const ks=S.kpis.filter(k=>k.dept===d.id).slice(0,3);
-    const lines=ks.map(k=>{
-      const cur=currentValue(k), prev=prevValue(k);
-      const isScore=k.type==='score';
-      let delta='';
-      if(cur!==null&&prev!==null&&prev!==cur){
-        const upGood=k.dir!=='down';
-        const rising=cur>prev;
-        const good=(rising&&upGood)||(!rising&&!upGood);
-        delta=` <span class="${good?'delta-up':'delta-down'}">${rising?'▲':'▼'}</span>`;
-      }
-      const valStr = isScore ? (cur===null?'—':cur+'/5')
-        : fmtVal(k,cur)+(k.target!=null&&k.target!==''?` <span class="tiny">/ ${fmtVal(k,+k.target)}</span>`:'');
-      return `<div class="dept-kpi-line"><span class="dkl-name">${esc(k.name)}</span>
-        <span class="dkl-val">${valStr}${delta}</span></div>`;
-    }).join('');
+    let lines;
+    if(d.id==='hr'){
+      lines=S.people.slice(0,3).map(p=>{
+        const cur=currentValue(p);
+        return `<div class="dept-kpi-line"><span class="dkl-name">${esc(p.name)}</span>
+          <span class="dkl-val">${cur===null?'—':cur+'/5'}</span></div>`;
+      }).join('') || '<div class="muted" style="margin-top:6px">No one added yet</div>';
+    } else {
+      const ks=S.kpis.filter(k=>k.dept===d.id).slice(0,3);
+      lines=ks.map(k=>{
+        const cur=currentValue(k), prev=prevValue(k);
+        const isScore=k.type==='score';
+        let delta='';
+        if(cur!==null&&prev!==null&&prev!==cur){
+          const upGood=k.dir!=='down';
+          const rising=cur>prev;
+          const good=(rising&&upGood)||(!rising&&!upGood);
+          delta=` <span class="${good?'delta-up':'delta-down'}">${rising?'▲':'▼'}</span>`;
+        }
+        const valStr = isScore ? (cur===null?'—':cur+'/5')
+          : fmtVal(k,cur)+(k.target!=null&&k.target!==''?` <span class="tiny">/ ${fmtVal(k,+k.target)}</span>`:'');
+        return `<div class="dept-kpi-line"><span class="dkl-name">${esc(k.name)}</span>
+          <span class="dkl-val">${valStr}${delta}</span></div>`;
+      }).join('') || '<div class="muted" style="margin-top:6px">No KPI data yet</div>';
+    }
     return `<button class="card tappable dept-card" onclick="openDept('${d.id}')">
       <div class="row"><span class="dept-name">${esc(d.name)}</span><span class="dot ${deptStatus(d.id)}"></span></div>
-      ${lines||'<div class="muted" style="margin-top:6px">No KPI data yet</div>'}
+      ${lines}
     </button>`;
   }).join('');
   app.innerHTML = masthead(true)+`<div class="page">
@@ -437,10 +457,12 @@ function renderDepts(){
   app.innerHTML = masthead(false)+`<div class="page">
     <div class="sec-label">All Departments</div>
     ${S.depts.map(d=>{
-      const n=S.kpis.filter(k=>k.dept===d.id).length;
+      const countLabel = d.id==='hr'
+        ? `${S.people.length} ${S.people.length===1?'person':'people'}`
+        : `${S.kpis.filter(k=>k.dept===d.id).length} KPI${S.kpis.filter(k=>k.dept===d.id).length===1?'':'s'}`;
       return `<button class="card tappable dept-card" onclick="openDept('${d.id}')">
         <div class="row"><span class="dept-name">${esc(d.name)}</span>
-        <span style="display:flex;align-items:center;gap:8px"><span class="tiny">${n} KPI${n===1?'':'s'}</span><span class="dot ${deptStatus(d.id)}"></span></span></div>
+        <span style="display:flex;align-items:center;gap:8px"><span class="tiny">${countLabel}</span><span class="dot ${deptStatus(d.id)}"></span></span></div>
       </button>`;}).join('')}
   </div>`;
 }
@@ -450,31 +472,41 @@ function closeView(){ VIEW=null; render(); }
 /* ---------- DEPT PAGE ---------- */
 function renderDept(id){
   const d=S.depts.find(x=>x.id===id);
-  const ks=S.kpis.filter(k=>k.dept===id);
-  const kpiCards=ks.map(k=>{
-    const cur=currentValue(k), st=kpiStatus(k);
-    const isScore=k.type==='score';
-    const valStr = isScore ? (cur===null?'—':cur) : fmtVal(k,cur);
-    const unitStr = isScore ? '/5' : (k.unit&&k.unit!=='$'?esc(k.unit):'');
-    const targetStr = isScore ? '' : (k.target!=null&&k.target!==''?`target<br>${fmtVal(k,+k.target)}`:'');
-    const metaStr = `${k.cadence} · ${isScore?'self-rated':(k.agg==='sum'?'total':'latest')}`;
-    return `<div class="card kpi-card">
-      <div class="kpi-top">
-        <div><div class="kpi-name">${esc(k.name)}</div>
-          <div class="kpi-meta">${metaStr}</div></div>
-        <button class="x-btn" onclick="editKPI('${k.id}')" aria-label="Edit KPI">✎</button>
-      </div>
-      <div class="kpi-mid">
-        <div class="kpi-val">${valStr}<span class="unit">${unitStr}</span></div>
-        <div class="kpi-target">${targetStr}</div>
-      </div>
-      ${sparkSVG(k)}
-      <div class="kpi-foot">
-        <span class="status-pill st-${st}">${st==='on'?'On target':st==='risk'?'At risk':st==='off'?'Off track':'No data'}</span>
-        <button class="btn small" onclick="logKPI('${k.id}')">Log entry</button>
-      </div>
-    </div>`;
-  }).join('');
+  let mainHTML;
+  if(id==='hr'){
+    mainHTML = `<div class="sec-label">Key Relationships</div>${hrPanels()}`;
+  } else {
+    const ks=S.kpis.filter(k=>k.dept===id);
+    const kpiCards=ks.map(k=>{
+      const cur=currentValue(k), st=kpiStatus(k);
+      const isScore=k.type==='score';
+      const valStr = isScore ? (cur===null?'—':cur) : fmtVal(k,cur);
+      const unitStr = isScore ? '/5' : (k.unit&&k.unit!=='$'?esc(k.unit):'');
+      const targetStr = isScore ? '' : (k.target!=null&&k.target!==''?`target<br>${fmtVal(k,+k.target)}`:'');
+      const metaStr = `${k.cadence} · ${isScore?'self-rated':(k.agg==='sum'?'total':'latest')}`;
+      return `<div class="card kpi-card">
+        <div class="kpi-top">
+          <div><div class="kpi-name">${esc(k.name)}</div>
+            <div class="kpi-meta">${metaStr}</div></div>
+          <button class="x-btn" onclick="editKPI('${k.id}')" aria-label="Edit KPI">✎</button>
+        </div>
+        <div class="kpi-mid">
+          <div class="kpi-val">${valStr}<span class="unit">${unitStr}</span></div>
+          <div class="kpi-target">${targetStr}</div>
+        </div>
+        ${sparkSVG(k)}
+        <div class="kpi-foot">
+          <span class="status-pill st-${st}">${st==='on'?'On target':st==='risk'?'At risk':st==='off'?'Off track':'No data'}</span>
+          <button class="btn small" onclick="logKPI('${k.id}')">Log entry</button>
+        </div>
+      </div>`;
+    }).join('');
+    mainHTML = `<div class="sec-label">Key Performance Indicators</div>
+      ${kpiCards||'<div class="muted">No KPIs yet.</div>'}
+      <button class="btn ghost" style="width:100%" onclick="editKPI(null,'${id}')">+ Add KPI</button>
+      ${id==='finance'?financePanels():''}
+      ${id==='rd'?rdPanels():''}`;
+  }
 
   const goals=(d.goals||[]).map((g,i)=>`<div class="check-item">
       <button class="check-box ${g.done?'done':''}" onclick="toggleGoal('${id}',${i})">${g.done?'✓':''}</button>
@@ -491,11 +523,7 @@ function renderDept(id){
     <div class="mast-rule thin"></div></div>
   <div class="page">
     <button class="btn ghost small" onclick="closeView()">← Back</button>
-    <div class="sec-label">Key Performance Indicators</div>
-    ${kpiCards||'<div class="muted">No KPIs yet.</div>'}
-    <button class="btn ghost" style="width:100%" onclick="editKPI(null,'${id}')">+ Add KPI</button>
-    ${id==='finance'?financePanels():''}
-    ${id==='rd'?rdPanels():''}
+    ${mainHTML}
     <div class="sec-label">Goals</div>
     <div class="card">${goals||'<div class="muted">No goals set.</div>'}
       <div class="add-row"><input id="goalIn" placeholder="Add a goal…"><button class="btn small" onclick="addGoal('${id}')">Add</button></div></div>
@@ -517,7 +545,7 @@ const ASSET_CATS=[['cash','Cash'],['investments','Investments'],['realestate','R
 function financePanels(){
   const rows=S.assets.map(a=>`<div class="income-row">
     <span>${esc(a.name)}<br><span class="asset-cat">${ASSET_CATS.find(c=>c[0]===a.cat)[1]}</span></span>
-    <span class="mono" style="text-align:right">${a.cat==='liability'?'−':''}$${(+a.value).toLocaleString()}</span>
+    <button class="mono" style="text-align:right;width:100%" onclick="editAsset('${a.id}')">${a.cat==='liability'?'−':''}$${(+a.value).toLocaleString()}</button>
     <button class="x-btn" onclick="delAsset('${a.id}')">×</button></div>`).join('');
   const nw=S.assets.reduce((s,a)=>s+(a.cat==='liability'?-1:1)*+a.value,0);
   const mo=monthKey(todayStr());
@@ -533,17 +561,17 @@ function financePanels(){
         <span class="tiny">NET WORTH</span><span class="mono" style="font-size:17px;color:var(--gold)">$${nw.toLocaleString()}</span></div>
       <div class="add-row"><button class="btn ghost small" style="flex:1" onclick="addAsset()">+ Asset / liability</button>
       <button class="btn small" onclick="snapshotNW(${nw})">Record snapshot</button></div>
-      <div class="tiny" style="margin-top:8px">Snapshot logs today's net worth to the Net Worth KPI.</div></div>
+      <div class="tiny" style="margin-top:8px">Tap a value to edit it. Snapshot logs today's net worth to the Net Worth KPI.</div></div>
     <div class="sec-label">Income — ${fmtDate(mo+'-01').replace(/ \d+,/,'')}</div>
     <div class="card">${incRows||'<div class="muted">No income logged this month.</div>'}
       <div class="row" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
         <span class="tiny">MONTH TOTAL</span><span class="mono">$${incTotal.toLocaleString()}</span></div>
-      <div class="add-row"><button class="btn ghost small" style="flex:1" onclick="addIncome(${JSON.stringify(mo)})">+ Income entry</button>
+      <div class="add-row"><button class="btn ghost small" style="flex:1" onclick="addIncome('${mo}')">+ Income entry</button>
       <button class="btn small" onclick="syncIncomeKPI('${mo}',${incTotal})">Post to KPI</button></div></div>`;
 }
 function addAsset(){
   openModal(`<h3>Add asset or liability</h3>
-    <div class="form-row"><label>Name</label><input id="m_name" placeholder="e.g. Primary residence"></div>
+    <div class="form-row"><label>Name</label><input id="m_name" placeholder="e.g. Primary residence" autofocus></div>
     <div class="form-2col">
       <div class="form-row"><label>Category</label><select id="m_cat">${ASSET_CATS.map(c=>`<option value="${c[0]}">${c[1]}</option>`).join('')}</select></div>
       <div class="form-row"><label>Value ($)</label><input id="m_val" type="number" inputmode="decimal"></div></div>
@@ -552,12 +580,28 @@ function addAsset(){
 }
 function saveAsset(){ const n=g('m_name'),c=g('m_cat'),v=g('m_val');
   if(!n||!v)return; S.assets.push({id:uid(),name:n,cat:c,value:+v}); persist(); closeModal(); render(); }
-function delAsset(id){ S.assets=S.assets.filter(a=>a.id!==id); persist(); render(); }
+function editAsset(id){
+  const a=S.assets.find(x=>x.id===id);
+  openModal(`<h3>Edit asset</h3>
+    <div class="form-row"><label>Name</label><input id="m_name" value="${esc(a.name)}"></div>
+    <div class="form-2col">
+      <div class="form-row"><label>Category</label><select id="m_cat">${ASSET_CATS.map(c=>`<option value="${c[0]}" ${c[0]===a.cat?'selected':''}>${c[1]}</option>`).join('')}</select></div>
+      <div class="form-row"><label>Value ($)</label><input id="m_val" type="number" inputmode="decimal" value="${a.value}" autofocus></div></div>
+    <div class="modal-actions">
+      <button class="btn danger" onclick="delAsset('${id}')">Delete</button>
+      <button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn" onclick="saveEditAsset('${id}')">Save</button></div>`);
+}
+function saveEditAsset(id){
+  const a=S.assets.find(x=>x.id===id); const n=g('m_name'),c=g('m_cat'),v=g('m_val');
+  if(!n||v==='')return; a.name=n; a.cat=c; a.value=+v; persist(); closeModal(); render();
+}
+function delAsset(id){ S.assets=S.assets.filter(a=>a.id!==id); persist(); closeModal(); render(); }
 function snapshotNW(nw){ const k=S.kpis.find(k=>k.id==='networth'); if(!k)return;
   k.entries=k.entries.filter(e=>e.d!==todayStr()); k.entries.push({d:todayStr(),v:nw}); persist(); render(); toast('Net worth snapshot recorded'); }
 function addIncome(mo){
   openModal(`<h3>Log income</h3>
-    <div class="form-row"><label>Source</label><input id="m_src" placeholder="e.g. Salary"></div>
+    <div class="form-row"><label>Source</label><input id="m_src" placeholder="e.g. Salary" autofocus></div>
     <div class="form-row"><label>Amount ($)</label><input id="m_amt" type="number" inputmode="decimal"></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Cancel</button>
     <button class="btn" onclick="saveIncome('${mo}')">Save</button></div>`);
@@ -640,6 +684,104 @@ function addSkillMilestone(skillId){ const inp=document.getElementById('msIn_'+s
 function toggleSkillMilestone(skillId,i){ const sk=S.skills.find(s=>s.id===skillId); sk.milestones[i].done=!sk.milestones[i].done; persist(); render(); }
 function delSkillMilestone(skillId,i){ S.skills.find(s=>s.id===skillId).milestones.splice(i,1); persist(); render(); }
 
+/* ---------- HR: PEOPLE & RELATIONSHIPS ---------- */
+function hrPanels(){
+  if(!S.people.length){
+    return `<div class="card"><div class="muted">No one added yet. Track the relationships that matter most — spouse, kids, close friends, whoever you want to be intentional about.</div></div>
+      <button class="btn ghost" style="width:100%;margin-top:2px" onclick="addPerson()">+ Add person</button>`;
+  }
+  const cards=S.people.map(p=>{
+    const cur=currentValue(p), st=kpiStatus(p);
+    const inits=(p.initiatives||[]).map(ini=>{
+      const icur=currentValue(ini), ist=kpiStatus(ini);
+      return `<div class="init-row">
+        <div class="init-top"><span class="init-title">${esc(ini.title)}</span>
+          <span class="status-pill st-${ist}">${icur===null?'—':icur+'/5'}</span></div>
+        <div class="init-actions"><button class="btn ghost small" onclick="logPersonScore('${p.id}','${ini.id}')">Log</button>
+        <button class="x-btn" onclick="delInitiative('${p.id}','${ini.id}')">×</button></div>
+      </div>`;
+    }).join('');
+    return `<div class="card">
+      <div class="row">
+        <div><div style="font-weight:600">${esc(p.name)}</div><div class="tiny">${esc(p.relationship||'—')}</div></div>
+        <button class="x-btn" onclick="editPerson('${p.id}')" aria-label="Edit person">✎</button>
+      </div>
+      <div class="kpi-mid" style="margin-top:10px">
+        <div class="kpi-val">${cur===null?'—':cur}<span class="unit">/5 overall</span></div>
+      </div>
+      ${sparkSVG(p)}
+      <div class="kpi-foot">
+        <span class="status-pill st-${st}">${st==='on'?'Thriving':st==='risk'?'Needs attention':st==='off'?'Struggling':'No data'}</span>
+        <button class="btn small" onclick="logPersonScore('${p.id}',null)">Log overall</button>
+      </div>
+      ${inits?`<div class="sec-label" style="margin:14px 2px 6px">Initiatives</div>${inits}`:''}
+      <button class="btn ghost small" style="width:100%;margin-top:10px" onclick="addInitiative('${p.id}')">+ Add initiative</button>
+    </div>`;
+  }).join('');
+  return `${cards}<button class="btn ghost" style="width:100%" onclick="addPerson()">+ Add person</button>`;
+}
+function addPerson(){
+  openModal(`<h3>Add person</h3>
+    <div class="form-row"><label>Name</label><input id="m_name" placeholder="e.g. Sarah" autofocus></div>
+    <div class="form-row"><label>Relationship</label><input id="m_rel" placeholder="e.g. Wife, Daughter, Friend"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+    <button class="btn" onclick="savePerson()">Add</button></div>`);
+}
+function savePerson(){ const n=g('m_name'); if(!n)return;
+  S.people.push({id:uid(),name:n,relationship:g('m_rel'),type:'score',cadence:'week',entries:[],initiatives:[]});
+  persist(); closeModal(); render(); }
+function editPerson(id){
+  const p=S.people.find(x=>x.id===id);
+  openModal(`<h3>Edit person</h3>
+    <div class="form-row"><label>Name</label><input id="m_name" value="${esc(p.name)}"></div>
+    <div class="form-row"><label>Relationship</label><input id="m_rel" value="${esc(p.relationship||'')}"></div>
+    <div class="modal-actions"><button class="btn danger" onclick="delPerson('${id}')">Delete</button>
+    <button class="btn ghost" onclick="closeModal()">Cancel</button>
+    <button class="btn" onclick="saveEditPerson('${id}')">Save</button></div>`);
+}
+function saveEditPerson(id){ const p=S.people.find(x=>x.id===id); const n=g('m_name'); if(!n)return;
+  p.name=n; p.relationship=g('m_rel'); persist(); closeModal(); render(); }
+function delPerson(id){ if(!confirm('Delete this person and all their initiatives?'))return;
+  S.people=S.people.filter(p=>p.id!==id); persist(); closeModal(); render(); }
+function addInitiative(personId){
+  openModal(`<h3>New initiative</h3>
+    <div class="form-row"><label>What are you focusing on?</label><input id="m_title" placeholder="e.g. Weekly date night" autofocus></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+    <button class="btn" onclick="saveInitiative('${personId}')">Add</button></div>`);
+}
+function saveInitiative(personId){ const t=g('m_title'); if(!t)return;
+  S.people.find(x=>x.id===personId).initiatives.push({id:uid(),title:t,type:'score',cadence:'week',entries:[]});
+  persist(); closeModal(); render(); }
+function delInitiative(personId,initId){
+  const p=S.people.find(x=>x.id===personId); p.initiatives=p.initiatives.filter(i=>i.id!==initId);
+  persist(); render(); }
+function logPersonScore(personId,initId){
+  const p=S.people.find(x=>x.id===personId);
+  const target = initId ? p.initiatives.find(i=>i.id===initId) : p;
+  const label = initId ? `${p.name} — ${target.title}` : `${p.name} (overall)`;
+  const last = target.entries.length?target.entries[target.entries.length-1].v:null;
+  window.__pickedScore=last; window.__logCtx={personId,initId};
+  openModal(`<h3>Log — ${esc(label)}</h3>
+    <div class="form-row"><label>Rating</label>
+      <div class="score-pick" id="scorePick">
+        ${[1,2,3,4,5].map(n=>`<button class="score-btn ${n===last?'sel':''}" data-v="${n}" onclick="selectScore(${n})">${n}</button>`).join('')}
+      </div>
+      <div class="score-hint">1 = struggling &nbsp;·&nbsp; 5 = thriving</div></div>
+    <div class="form-row"><label>Date</label><input id="m_date" type="date" value="${todayStr()}"></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+    <button class="btn" onclick="saveLogPerson()">Save entry</button></div>`);
+}
+function saveLogPerson(){
+  const ctx=window.__logCtx||{}; const d=g('m_date'); const v=window.__pickedScore;
+  if(!d||!v)return;
+  const p=S.people.find(x=>x.id===ctx.personId); if(!p)return;
+  const target = ctx.initId ? p.initiatives.find(i=>i.id===ctx.initId) : p;
+  if(!target)return;
+  target.entries=target.entries.filter(e=>e.d!==d);
+  target.entries.push({d,v}); target.entries.sort((a,b)=>a.d<b.d?-1:1);
+  persist(); closeModal(); render();
+}
+
 /* ---------- KPI LOG / EDIT ---------- */
 function logKPI(id){
   const k=S.kpis.find(x=>x.id===id);
@@ -679,7 +821,7 @@ function saveLog(id){
   k.entries.push({d,v}); k.entries.sort((a,b)=>a.d<b.d?-1:1);
   persist(); closeModal(); render(); }
 
-const SCORE_ONLY_DEPTS=['health','hr','spiritual','operations'];
+const SCORE_ONLY_DEPTS=['health','spiritual','operations'];
 function editKPI(id, deptForNew){
   const k=id?S.kpis.find(x=>x.id===id):null;
   const dept=k?k.dept:deptForNew;
@@ -736,14 +878,28 @@ function delKPI(id){ if(!confirm('Delete this KPI and its history?'))return;
 
 /* ---------- BOARD ---------- */
 function buildPacket(){
-  return S.depts.map(d=>({dept:d.name, deptId:d.id, status:deptStatus(d.id),
-    kpis:S.kpis.filter(k=>k.dept===d.id).map(k=>{
-      const cur=currentValue(k);
-      return {name:k.name,
-        cur: k.type==='score' ? (cur===null?'—':cur+'/5') : fmtVal(k,cur),
-        target: k.type==='score' ? '' : (k.target!=null&&k.target!==''?fmtVal(k,+k.target):'—'),
-        st:kpiStatus(k)};
-    })}));
+  return S.depts.map(d=>{
+    if(d.id==='hr'){
+      const kpis=[];
+      S.people.forEach(p=>{
+        const cur=currentValue(p);
+        kpis.push({name:`${p.name} (${p.relationship||'—'})`, cur: cur===null?'—':cur+'/5', target:'', st:kpiStatus(p)});
+        (p.initiatives||[]).forEach(ini=>{
+          const icur=currentValue(ini);
+          kpis.push({name:`  · ${ini.title}`, cur: icur===null?'—':icur+'/5', target:'', st:kpiStatus(ini)});
+        });
+      });
+      return {dept:d.name, deptId:d.id, status:deptStatus(d.id), kpis};
+    }
+    return {dept:d.name, deptId:d.id, status:deptStatus(d.id),
+      kpis:S.kpis.filter(k=>k.dept===d.id).map(k=>{
+        const cur=currentValue(k);
+        return {name:k.name,
+          cur: k.type==='score' ? (cur===null?'—':cur+'/5') : fmtVal(k,cur),
+          target: k.type==='score' ? '' : (k.target!=null&&k.target!==''?fmtVal(k,+k.target):'—'),
+          st:kpiStatus(k)};
+      })};
+  });
 }
 function renderBoard(){
   const q=curQuarter();
